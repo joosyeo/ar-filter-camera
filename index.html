@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>나만의 멀티 AR 필터 카메라</title>
+    
+    <!-- 구글 미디어파이프 AI 엔진 불러오기 -->
+    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm/vision_bundle.js"></script>
+
+    <style>
+        * { 
+            box-sizing: border-box; 
+            margin: 0; 
+            padding: 0; 
+        }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+            background: #111; 
+            color: #fff; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            overflow: hidden; 
+        }
+        
+        .camera-box { 
+            flex: 1; 
+            position: relative; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+        }
+        
+        canvas { 
+            max-width: 100%; 
+            max-height: 100%; 
+            object-fit: contain; 
+            display: block;
+        }
+        
+        video { 
+            display: none; 
+        }
+        
+        .controls { 
+            height: 30vh; 
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            padding: 15px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 10px; 
+            justify-content: center;
+            overflow-y: auto;
+        }
+        
+        .row { 
+            display: flex; 
+            gap: 8px; 
+        }
+        
+        button, select, label { 
+            flex: 1; 
+            padding: 12px; 
+            border-radius: 10px; 
+            border: none; 
+            font-size: 15px; 
+            font-weight: 600; 
+            text-align: center; 
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        button:active, select:active, label:active {
+            transform: scale(0.98);
+        }
+        
+        select { 
+            background: #444; 
+            color: #fff; 
+            text-align-last: center;
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 8px center;
+            background-size: 20px;
+            padding-right: 32px;
+        }
+        
+        .file-label { 
+            background: linear-gradient(135deg, #ff9f43 0%, #ffb75d 100%); 
+            color: #fff; 
+            cursor: pointer; 
+            display: block;
+        }
+        
+        .file-label:hover {
+            box-shadow: 0 4px 15px rgba(255, 159, 67, 0.4);
+        }
+        
+        #bgmInput { 
+            display: none; 
+        }
+        
+        .record-btn { 
+            background: linear-gradient(135deg, #ff4757 0%, #ff6348 100%);
+            color: #fff; 
+            font-size: 16px;
+        }
+        
+        .record-btn:hover {
+            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+        }
+        
+        .recording { 
+            background: linear-gradient(135deg, #2ed573 0%, #26de81 100%) !important; 
+            animation: pulse 1s infinite;
+            box-shadow: 0 0 20px rgba(46, 213, 115, 0.6) !important;
+        }
+        
+        @keyframes pulse { 
+            50% { opacity: 0.8; } 
+        }
+
+        .status-text {
+            text-align: center;
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 5px;
+            min-height: 20px;
+        }
+
+        @media (max-width: 600px) {
+            .controls {
+                height: 40vh;
+            }
+            
+            button, select, label {
+                font-size: 14px;
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="camera-box">
+        <canvas id="arCanvas"></canvas>
+        <video id="webcam" autoplay playsinline muted></video>
+    </div>
+
+    <div class="controls">
+        <!-- 필터 선택 메뉴 -->
+        <div class="row">
+            <select id="filterSelect">
+                <option value="sunglasses">🕶️ 스웨그 선글라스</option>
+                <option value="blush">🌸 뽀샤시 볼터치</option>
+                <option value="neonHair">🔥 사이버 네온 가발</option>
+                <option value="none">❌ 필터 끄기</option>
+            </select>
+        </div>
+        
+        <div class="row">
+            <select id="cameraSelect">
+                <option value="user">📷 전면 카메라</option>
+                <option value="environment">🌲 후면 카메라</option>
+            </select>
+            <label class="file-label" for="bgmInput">🎵 음악 선택</label>
+            <input type="file" id="bgmInput" accept="audio/*">
+        </div>
+        
+        <button id="recordBtn" class="record-btn">🔴 촬영 시작</button>
+        <div class="status-text" id="statusText"></div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('arCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const filterSelect = document.getElementById('filterSelect');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const bgmInput = document.getElementById('bgmInput');
+        const recordBtn = document.getElementById('recordBtn');
+        const statusText = document.getElementById('statusText');
+
+        let faceLandmarker;
+        let runningMode = "VIDEO";
+        let currentFacingMode = "user";
+        let chosenFilter = "sunglasses";
+
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        let audioContext;
+        let bgmSource;
+        let audioDestination;
+
+        // 상태 메시지 업데이트
+        function updateStatus(message) {
+            statusText.innerText = message;
+        }
+
+        // AI 가동
+        async function initMediaPipe() {
+            try {
+                updateStatus('AI 모델 로딩 중...');
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+                );
+                faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    outputFaceBlendshapes: true,
+                    runningMode: runningMode,
+                    numFaces: 1
+                });
+                updateStatus('준비 완료! 카메라를 시작합니다.');
+                startCamera();
+            } catch (error) {
+                console.error('MediaPipe 초기화 오류:', error);
+                updateStatus('⚠️ AI 모델 로드 실패. 페이지를 새로고침하세요.');
+            }
+        }
+
+        async function startCamera() {
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            const constraints = {
+                video: { 
+                    facingMode: currentFacingMode, 
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: true
+            };
+            try {
+                updateStatus('카메라 권한 요청 중...');
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                video.addEventListener('loadedmetadata', () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    updateStatus('');
+                    requestAnimationFrame(renderLoop);
+                });
+            } catch (err) {
+                console.error('카메라 오류:', err);
+                updateStatus('❌ 카메라 권한을 확인해주세요!');
+            }
+        }
+
+        let lastVideoTime = -1;
+        async function renderLoop() {
+            ctx.save();
+            if (currentFacingMode === "user") {
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+            }
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            if (video.currentTime !== lastVideoTime) {
+                lastVideoTime = video.currentTime;
+                const startTimeMs = performance.now();
+                const results = faceLandmarker.detectForVideo(video, startTimeMs);
+
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    const landmarks = results.faceLandmarks[0];
+
+                    if (chosenFilter === "sunglasses") {
+                        const p1 = landmarks[33];
+                        const p2 = landmarks[263];
+                        
+                        const x1 = p1.x * canvas.width;
+                        const y1 = p1.y * canvas.height;
+                        const x2 = p2.x * canvas.width;
+                        const y2 = p2.y * canvas.height;
+
+                        if (currentFacingMode === "user") {
+                            drawSunglasses(canvas.width - x1, y1, canvas.width - x2, y2);
+                        } else {
+                            drawSunglasses(x1, y1, x2, y2);
+                        }
+                    } 
+                    else if (chosenFilter === "blush") {
+                        const leftCheek = landmarks[425];
+                        const rightCheek = landmarks[205];
+                        const faceCenter = landmarks[4];
+                        const faceTop = landmarks[10];
+                        
+                        const r = Math.abs(faceTop.y - faceCenter.y) * canvas.height * 0.25;
+
+                        if (currentFacingMode === "user") {
+                            drawBlush(canvas.width - leftCheek.x * canvas.width, leftCheek.y * canvas.height, r);
+                            drawBlush(canvas.width - rightCheek.x * canvas.width, rightCheek.y * canvas.height, r);
+                        } else {
+                            drawBlush(leftCheek.x * canvas.width, leftCheek.y * canvas.height, r);
+                            drawBlush(rightCheek.x * canvas.width, rightCheek.y * canvas.height, r);
+                        }
+                    } 
+                    else if (chosenFilter === "neonHair") {
+                        const headTop = landmarks[10];
+                        const nose = landmarks[4];
+                        
+                        const hx = headTop.x * canvas.width;
+                        const hy = headTop.y * canvas.height;
+                        const size = Math.abs(headTop.y - nose.y) * canvas.height * 1.5;
+
+                        if (currentFacingMode === "user") {
+                            drawNeonHair(canvas.width - hx, hy, size);
+                        } else {
+                            drawNeonHair(hx, hy, size);
+                        }
+                    }
+                }
+            }
+            requestAnimationFrame(renderLoop);
+        }
+
+        // [필터 1] 선글라스
+        function drawSunglasses(x1, y1, x2, y2) {
+            const midX = (x1 + x2) / 2;
+            const midY = (y1 + y2) / 2;
+            const w = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+
+            ctx.save();
+            ctx.translate(midX, midY);
+            ctx.rotate(angle);
+            
+            // 선글라스 프레임
+            ctx.fillStyle = "#111";
+            ctx.beginPath();
+            ctx.roundRect(-w * 0.9, -w * 0.3, w * 1.8, w * 0.6, w * 0.2);
+            ctx.fill();
+            
+            // 렌즈 내부
+            ctx.fillStyle = "#333";
+            ctx.fillRect(-w * 0.75, -w * 0.2, w * 0.6, w * 0.4);
+            ctx.fillRect(w * 0.15, -w * 0.2, w * 0.6, w * 0.4);
+            
+            // 눈부심 효과
+            ctx.strokeStyle = "rgba(255,255,255,0.4)";
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(-w*0.6, -w*0.1); 
+            ctx.lineTo(-w*0.3, w*0.1);
+            ctx.moveTo(w*0.3, -w*0.1); 
+            ctx.lineTo(w*0.6, w*0.1);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        // [필터 2] 볼터치
+        function drawBlush(cx, cy, r) {
+            ctx.save();
+            const gradient = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r);
+            gradient.addColorStop(0, "rgba(255, 105, 180, 0.6)");
+            gradient.addColorStop(1, "rgba(255, 105, 180, 0)");
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // [필터 3] 네온 가발
+        function drawNeonHair(hx, hy, size) {
+            ctx.save();
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = "#00ffff";
+            ctx.fillStyle = "rgba(0, 255, 255, 0.8)";
+            ctx.beginPath();
+            ctx.moveTo(hx - size * 0.6, hy);
+            ctx.bezierCurveTo(hx - size * 0.8, hy - size, hx - size * 0.2, hy - size * 1.2, hx, hy - size * 1.5);
+            ctx.bezierCurveTo(hx + size * 0.2, hy - size * 1.2, hx + size * 0.8, hy - size, hx + size * 0.6, hy);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // 녹화 기능
+        recordBtn.addEventListener('click', () => {
+            if (!isRecording) startRecording();
+            else stopRecording();
+        });
+
+        async function startRecording() {
+            try {
+                recordedChunks = [];
+                const videoStream = canvas.captureStream(30);
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioDestination = audioContext.createMediaStreamDestination();
+                
+                if (video.srcObject && video.srcObject.getAudioTracks().length > 0) {
+                    const micSource = audioContext.createMediaStreamSource(video.srcObject);
+                    micSource.connect(audioDestination);
+                }
+                
+                if (bgmInput.files.length > 0) {
+                    const file = bgmInput.files[0];
+                    const arrayBuffer = await file.arrayBuffer();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    bgmSource = audioContext.createBufferSource();
+                    bgmSource.buffer = audioBuffer;
+                    bgmSource.connect(audioDestination);
+                    bgmSource.connect(audioContext.destination);
+                    bgmSource.start(0);
+                }
+                
+                const combinedStream = new MediaStream();
+                combinedStream.addTrack(videoStream.getVideoTracks()[0]);
+                if (audioDestination.stream.getAudioTracks().length > 0) {
+                    combinedStream.addTrack(audioDestination.stream.getAudioTracks()[0]);
+                }
+                
+                mediaRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp9' });
+                mediaRecorder.ondataavailable = (e) => { 
+                    if (e.data.size > 0) recordedChunks.push(e.data); 
+                };
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const videoUrl = URL.createObjectURL(blob);
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = videoUrl;
+                    downloadLink.download = 'my_ar_filter_video.webm';
+                    document.body.appendChild(downloadLink);
+                    downloadLink.click();
+                    document.body.removeChild(downloadLink);
+                    if (bgmSource) bgmSource.stop();
+                    updateStatus('✅ 영상이 다운로드되었습니다!');
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                recordBtn.innerText = '⏹️ 촬영 종료 및 자동저장';
+                recordBtn.classList.add('recording');
+                updateStatus('🔴 촬영 중...');
+            } catch (error) {
+                console.error('녹화 오류:', error);
+                updateStatus('❌ 녹화 시작 실패');
+            }
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            isRecording = false;
+            recordBtn.innerText = '🔴 촬영 시작';
+            recordBtn.classList.remove('recording');
+            updateStatus('처리 중... 잠시만 기다려주세요.');
+        }
+
+        filterSelect.addEventListener('change', (e) => { 
+            chosenFilter = e.target.value; 
+        });
+        
+        cameraSelect.addEventListener('change', (e) => { 
+            currentFacingMode = e.target.value; 
+            startCamera(); 
+        });
+
+        // 초기화
+        initMediaPipe();
+    </script>
+
+</body>
+</html>
