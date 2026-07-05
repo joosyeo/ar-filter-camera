@@ -1,0 +1,117 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #111;
+    color: #fff;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.camera-box {
+    flex: 1;
+    position: relative;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+canvas {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+video {
+    display: none;
+}
+
+.controls {
+    height: 30vh;
+    background: #222;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    justify-content: center;
+}
+
+.row {
+    display: flex;
+    gap: 8px;
+}
+
+button, select, label {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    border: none;
+    font-size: 15px;
+    font-weight: bold;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+select {
+    background: #444;
+    color: #fff;
+    text-align-last: center;
+    cursor: pointer;
+}
+
+select:hover {
+    background: #555;
+}
+
+.file-label {
+    background: #ff9f43;
+    color: #fff;
+    cursor: pointer;
+    display: block;
+    user-select: none;
+}
+
+.file-label:hover {
+    background: #ffb366;
+}
+
+#bgmInput {
+    display: none;
+}
+
+.record-btn {
+    background: #ff4757;
+    color: #fff;
+    font-size: 16px;
+}
+
+.record-btn:hover {
+    background: #ff6a7c;
+}
+
+.recording {
+    background: #2ed573 !important;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    50% { opacity: 0.6; }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .controls {
+        height: 35vh;
+        padding: 10px;
+        gap: 8px;
+    }
+
+    button, select, label {
+        padding: 10px;
+        font-size: 13px;
+    }
+}
